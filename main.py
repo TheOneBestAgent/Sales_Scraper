@@ -1,143 +1,98 @@
-import httpx
-from bs4 import BeautifulSoup
-from typing import List, Dict
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import List, Optional
 import asyncio
+from scraper import search_ebay
 
-async def search_ebay(query: str, max_results: int = 5) -> List[Dict]:
-    """
-    Search eBay for products and prices
-    Note: This is a simplified example - be respectful of rate limits
-    """
-    results = []
-    
-    # Format query for URL
-    search_query = query.replace(' ', '+')
-    url = f"https://www.ebay.com/sch/i.html?_nkw={search_query}&_ipg={max_results}&LH_BIN=1"
-    
-    print(f"Searching eBay for: {query}")
-    print(f"URL: {url}")
-    
-    async with httpx.AsyncClient() as client:
-        try:
-            # Add headers to look like a real browser
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1'
-            }
-            
-            response = await client.get(url, headers=headers, timeout=30, follow_redirects=True)
-            print(f"Response status: {response.status_code}")
-            
-            if response.status_code != 200:
-                print(f"Error: Got status code {response.status_code}")
-                return results
-            
-            soup = BeautifulSoup(response.text, 'lxml')
-            
-            # Try different selectors for eBay items
-            items = soup.find_all('div', class_='s-item__wrapper')
-            if not items:
-                items = soup.find_all('div', class_='s-item')
-            
-            print(f"Found {len(items)} items")
-            
-            for item in items[:max_results]:
-                try:
-                    # Extract title - try multiple selectors
-                    title_elem = item.find('h3', class_='s-item__title')
-                    if not title_elem:
-                        title_elem = item.find('h3')
-                    if not title_elem:
-                        continue
-                    
-                    title = title_elem.text.strip()
-                    
-                    # Skip irrelevant results
-                    if 'Shop on eBay' in title or title.startswith('Shop'):
-                        continue
-                    
-                    # Extract price - try multiple selectors
-                    price_elem = item.find('span', class_='s-item__price')
-                    if not price_elem:
-                        price_elem = item.find('span', {'class': lambda x: x and 'price' in x})
-                    if not price_elem:
-                        continue
-                    
-                    price_text = price_elem.text.strip()
-                    price = extract_price(price_text)
-                    
-                    # Extract URL
-                    link_elem = item.find('a', class_='s-item__link')
-                    if not link_elem:
-                        link_elem = item.find('a', href=True)
-                    url = link_elem['href'] if link_elem else ""
-                    
-                    # Extract condition
-                    condition_elem = item.find('span', class_='SECONDARY_INFO')
-                    condition = condition_elem.text.strip() if condition_elem else "Not specified"
-                    
-                    # Extract shipping
-                    shipping_elem = item.find('span', class_='s-item__shipping')
-                    shipping = shipping_elem.text.strip() if shipping_elem else "Not specified"
-                    
-                    result = {
-                        'title': title[:100],
-                        'price': price,
-                        'price_text': price_text,
-                        'condition': condition,
-                        'shipping': shipping,
-                        'url': url,
-                        'platform': 'eBay'
-                    }
-                    
-                    results.append(result)
-                    print(f"Added result: {title[:50]}... - {price_text}")
-                    
-                except Exception as e:
-                    print(f"Error parsing item: {e}")
-                    continue
-                    
-        except Exception as e:
-            print(f"Error searching eBay: {type(e).__name__}: {str(e)}")
-            # Return mock data for testing
-            print("Returning mock data due to error")
-            return [
-                {
-                    'title': f'Mock {query} Item 1',
-                    'price': 99.99,
-                    'price_text': '$99.99',
-                    'condition': 'New',
-                    'shipping': 'Free shipping',
-                    'url': 'https://www.ebay.com',
-                    'platform': 'eBay'
-                },
-                {
-                    'title': f'Mock {query} Item 2',
-                    'price': 89.99,
-                    'price_text': '$89.99',
-                    'condition': 'Used',
-                    'shipping': '$5.00 shipping',
-                    'url': 'https://www.ebay.com',
-                    'platform': 'eBay'
-                }
-            ]
-            
-    return results
+app = FastAPI(title="Price Comparison Bot")
 
-def extract_price(price_text: str) -> float:
-    """Extract numeric price from text like '$99.99' or '$50.00 to $100.00'"""
-    import re
+# Enable CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class ItemRequest(BaseModel):
+    query: str
+    max_results: Optional[int] = 10
+
+class PriceResult(BaseModel):
+    title: str
+    price: float
+    price_text: str
+    condition: str
+    shipping: str
+    url: str
+    platform: str
+
+class ComparisonResponse(BaseModel):
+    query: str
+    results: List[PriceResult]
+    lowest_price: Optional[float]
+    average_price: Optional[float]
+    highest_price: Optional[float]
+    total_results: int
+
+@app.get("/")
+def read_root():
+    return {"message": "Price Comparison Bot API is running!"}
+
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
+
+@app.post("/compare_prices")
+async def compare_prices(request: ItemRequest):
+    """Compare prices for a product across platforms"""
     
-    # Find all numbers in the price text
-    numbers = re.findall(r'[\d,]+\.?\d*', price_text)
+    if not request.query:
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
     
-    if numbers:
-        # Take the first number (lowest price if it's a range)
-        price = float(numbers[0].replace(',', ''))
-        return price
+    # Search eBay
+    try:
+        results = await search_ebay(request.query, request.max_results)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error searching: {str(e)}")
     
-    return 0.0
+    if not results:
+        return ComparisonResponse(
+            query=request.query,
+            results=[],
+            lowest_price=None,
+            average_price=None,
+            highest_price=None,
+            total_results=0
+        )
+    
+    # Convert to PriceResult objects
+    price_results = []
+    valid_prices = []
+    
+    for r in results:
+        if r['price'] > 0:  # Only include items with valid prices
+            price_results.append(PriceResult(**r))
+            valid_prices.append(r['price'])
+    
+    # Calculate statistics
+    lowest = min(valid_prices) if valid_prices else None
+    highest = max(valid_prices) if valid_prices else None
+    average = sum(valid_prices) / len(valid_prices) if valid_prices else None
+    
+    return ComparisonResponse(
+        query=request.query,
+        results=price_results,
+        lowest_price=lowest,
+        average_price=average,
+        highest_price=highest,
+        total_results=len(price_results)
+    )
+
+@app.get("/test")
+async def test_endpoint():
+    """Test endpoint to verify scraping works"""
+    results = await search_ebay("iPhone 12", 3)
+    return {"test_results": results}
