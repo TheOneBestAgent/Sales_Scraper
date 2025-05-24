@@ -219,6 +219,7 @@ async def search_facebook(query: str, max_results: int = 5) -> List[Dict]:
         })
     
     return mock_facebook
+
 async def search_craigslist(query: str, max_results: int = 5, city: str = "sfbay") -> List[Dict]:
     """
     Search Craigslist for products and prices
@@ -248,22 +249,50 @@ async def search_craigslist(query: str, max_results: int = 5, city: str = "sfbay
                 
             soup = BeautifulSoup(response.text, 'lxml')
             
-            # Find all result rows
+            # Try multiple selectors for Craigslist items
             items = soup.find_all('li', class_='result-row')
+            if not items:
+                # Try alternative selector
+                items = soup.find_all('div', class_='result-info')
+            
             print(f"Found {len(items)} Craigslist items")
+            
+            # If still no items, let's see what we got
+            if len(items) == 0:
+                # Check if there are any results at all
+                all_li = soup.find_all('li')
+                print(f"Total <li> elements on page: {len(all_li)}")
+                # Return mock data for now
+                return [
+                    {
+                        'title': f'{query} - Local Deal',
+                        'price': 150.00,
+                        'price_text': '$150',
+                        'condition': 'Used',
+                        'shipping': 'Local pickup (SF Bay Area)',
+                        'url': url,
+                        'platform': 'Craigslist (Mock)'
+                    }
+                ]
             
             for item in items[:max_results]:
                 try:
-                    # Extract title
+                    # Extract title - try multiple selectors
                     title_elem = item.find('a', class_='result-title')
+                    if not title_elem:
+                        title_elem = item.find('a', class_='hdrlnk')
                     if not title_elem:
                         continue
                     
                     title = title_elem.text.strip()
-                    url = title_elem['href']
+                    item_url = title_elem.get('href', '')
+                    if item_url and not item_url.startswith('http'):
+                        item_url = f"https://{city}.craigslist.org{item_url}"
                     
                     # Extract price
                     price_elem = item.find('span', class_='result-price')
+                    if not price_elem:
+                        price_elem = item.find('span', class_='price')
                     if not price_elem:
                         continue  # Skip items without price
                     
@@ -275,19 +304,17 @@ async def search_craigslist(query: str, max_results: int = 5, city: str = "sfbay
                     
                     # Extract location
                     location_elem = item.find('span', class_='result-hood')
-                    location = location_elem.text.strip() if location_elem else "Not specified"
-                    
-                    # Extract date
-                    date_elem = item.find('time', class_='result-date')
-                    date = date_elem['datetime'] if date_elem else "Unknown"
+                    if not location_elem:
+                        location_elem = item.find('small')
+                    location = location_elem.text.strip() if location_elem else "SF Bay Area"
                     
                     result = {
                         'title': title[:100],
                         'price': price,
                         'price_text': price_text,
-                        'condition': 'Used',  # Craigslist is mostly used items
+                        'condition': 'Used',
                         'shipping': f'Local pickup {location}',
-                        'url': url,
+                        'url': item_url,
                         'platform': 'Craigslist'
                     }
                     
