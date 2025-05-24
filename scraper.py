@@ -219,6 +219,90 @@ async def search_facebook(query: str, max_results: int = 5) -> List[Dict]:
         })
     
     return mock_facebook
+async def search_craigslist(query: str, max_results: int = 5, city: str = "sfbay") -> List[Dict]:
+    """
+    Search Craigslist for products and prices
+    Default city is San Francisco Bay Area - change as needed
+    """
+    results = []
+    
+    # Format query for URL
+    search_query = query.replace(' ', '+')
+    url = f"https://{city}.craigslist.org/search/sss?query={search_query}&sort=rel"
+    
+    print(f"Searching Craigslist ({city}) for: {query}")
+    print(f"URL: {url}")
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+            }
+            
+            response = await client.get(url, headers=headers, timeout=30)
+            print(f"Craigslist response status: {response.status_code}")
+            
+            if response.status_code != 200:
+                print(f"Craigslist returned status: {response.status_code}")
+                return results
+                
+            soup = BeautifulSoup(response.text, 'lxml')
+            
+            # Find all result rows
+            items = soup.find_all('li', class_='result-row')
+            print(f"Found {len(items)} Craigslist items")
+            
+            for item in items[:max_results]:
+                try:
+                    # Extract title
+                    title_elem = item.find('a', class_='result-title')
+                    if not title_elem:
+                        continue
+                    
+                    title = title_elem.text.strip()
+                    url = title_elem['href']
+                    
+                    # Extract price
+                    price_elem = item.find('span', class_='result-price')
+                    if not price_elem:
+                        continue  # Skip items without price
+                    
+                    price_text = price_elem.text.strip()
+                    price = extract_price(price_text)
+                    
+                    if price == 0:
+                        continue  # Skip items with invalid prices
+                    
+                    # Extract location
+                    location_elem = item.find('span', class_='result-hood')
+                    location = location_elem.text.strip() if location_elem else "Not specified"
+                    
+                    # Extract date
+                    date_elem = item.find('time', class_='result-date')
+                    date = date_elem['datetime'] if date_elem else "Unknown"
+                    
+                    result = {
+                        'title': title[:100],
+                        'price': price,
+                        'price_text': price_text,
+                        'condition': 'Used',  # Craigslist is mostly used items
+                        'shipping': f'Local pickup {location}',
+                        'url': url,
+                        'platform': 'Craigslist'
+                    }
+                    
+                    results.append(result)
+                    print(f"Added Craigslist result: {title[:50]}... - {price_text}")
+                    
+                except Exception as e:
+                    print(f"Error parsing Craigslist item: {e}")
+                    continue
+                    
+        except Exception as e:
+            print(f"Error searching Craigslist: {type(e).__name__}: {str(e)}")
+            
+    return results
+
 
 async def search_all_platforms(query: str, max_results: int = 5) -> Dict[str, List[Dict]]:
     """
@@ -228,17 +312,20 @@ async def search_all_platforms(query: str, max_results: int = 5) -> Dict[str, Li
     ebay_task = search_ebay(query, max_results)
     mercari_task = search_mercari(query, max_results)
     facebook_task = search_facebook(query, max_results)
+    craigslist_task = search_craigslist(query, max_results)
     
     # Wait for all searches to complete
-    ebay_results, mercari_results, facebook_results = await asyncio.gather(
-        ebay_task, mercari_task, facebook_task
+    ebay_results, mercari_results, facebook_results, craigslist_results = await asyncio.gather(
+        ebay_task, mercari_task, facebook_task, craigslist_task
     )
     
     return {
         'ebay': ebay_results,
         'mercari': mercari_results,
-        'facebook': facebook_results
+        'facebook': facebook_results,
+        'craigslist': craigslist_results
     }
+
 
 
 def extract_price(price_text: str) -> float:
