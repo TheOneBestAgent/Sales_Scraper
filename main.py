@@ -204,3 +204,35 @@ async def test_ebay_raw():
         "prices": [r.get('price', 'NO PRICE') for r in results]
     }
 
+@app.get("/debug_mercari")
+async def debug_mercari():
+    """Show what Mercari HTML looks like"""
+    try:
+        with open('/tmp/mercari_debug.html', 'r') as f:
+            content = f.read()
+        
+        # Find any dollar amounts in the HTML
+        import re
+        prices = re.findall(r'\$[\d,]+\.?\d*', content)
+        
+        # Find any potential item containers
+        item_indicators = [
+            content.count('data-testid'),
+            content.count('item'),
+            content.count('product'),
+            content.count('listing')
+        ]
+        
+        return {
+            "html_length": len(content),
+            "prices_found": prices[:10],  # First 10 prices
+            "indicators": {
+                "data-testid": item_indicators[0],
+                "item": item_indicators[1],
+                "product": item_indicators[2],
+                "listing": item_indicators[3]
+            },
+            "preview": content[:1000]  # First 1000 chars
+        }
+    except Exception as e:
+        return {"error": str(e)}
