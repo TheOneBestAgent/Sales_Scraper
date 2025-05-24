@@ -190,3 +190,17 @@ async def compare_prices_mock(request: ItemRequest):
         highest_price=max(prices),
         total_results=len(mock_results)
     )
+
+@app.get("/test_ebay_raw")
+async def test_ebay_raw():
+    """Test eBay scraping and show raw results"""
+    from scraper import search_ebay
+    
+    results = await search_ebay("iPhone 12", 3)
+    
+    return {
+        "count": len(results),
+        "raw_results": results,
+        "prices": [r.get('price', 'NO PRICE') for r in results]
+    }
+
