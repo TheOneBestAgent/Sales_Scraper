@@ -45,6 +45,16 @@ async def search_ebay(query: str, max_results: int = 5) -> List[Dict]:
             
             print(f"Found {len(items)} items")
             
+            # Debug: Let's see what we're getting
+            if items and len(items) > 0:
+                print("First item HTML preview:")
+                print(str(items[0])[:500])  # Print first 500 chars of first item
+            else:
+                print("No items found with expected selectors")
+                # Try to find any div with 'item' in the class
+                all_items = soup.find_all('div', class_=lambda x: x and 'item' in str(x))
+                print(f"Found {len(all_items)} divs with 'item' in class name")
+            
             for item in items[:max_results]:
                 try:
                     # Extract title - try multiple selectors
@@ -52,6 +62,9 @@ async def search_ebay(query: str, max_results: int = 5) -> List[Dict]:
                     if not title_elem:
                         title_elem = item.find('h3')
                     if not title_elem:
+                        title_elem = item.find(['span', 'div'], class_=lambda x: x and 'title' in str(x))
+                    if not title_elem:
+                        print("No title found in item")
                         continue
                     
                     title = title_elem.text.strip()

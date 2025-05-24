@@ -96,3 +96,35 @@ async def test_endpoint():
     """Test endpoint to verify scraping works"""
     results = await search_ebay("iPhone 12", 3)
     return {"test_results": results}
+
+@app.post("/compare_prices_mock")
+async def compare_prices_mock(request: ItemRequest):
+    """Mock endpoint that always returns data for testing"""
+    
+    # Generate mock results based on the query
+    mock_results = []
+    base_price = 100.0
+    
+    for i in range(request.max_results):
+        price = base_price + (i * 10) - (i * 3.5)
+        mock_results.append(PriceResult(
+            title=f"{request.query} - Option {i+1}",
+            price=price,
+            price_text=f"${price:.2f}",
+            condition="New" if i % 2 == 0 else "Used",
+            shipping="Free shipping" if i % 3 == 0 else f"${5 + i:.2f} shipping",
+            url=f"https://example.com/item{i+1}",
+            platform="eBay"
+        ))
+    
+    prices = [r.price for r in mock_results]
+    
+    return ComparisonResponse(
+        query=request.query,
+        results=mock_results,
+        lowest_price=min(prices),
+        average_price=sum(prices) / len(prices),
+        highest_price=max(prices),
+        total_results=len(mock_results)
+    )
+
