@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 import asyncio
-from scraper import search_ebay
+from scraper import search_ebay, search_all_platforms
 
 app = FastAPI(title="Price Comparison Bot")
 
@@ -97,6 +97,69 @@ async def test_endpoint():
     results = await search_ebay("iPhone 12", 3)
     return {"test_results": results}
 
+@app.post("/compare_all_platforms")
+async def compare_all_platforms(request: ItemRequest):
+    """Compare prices across eBay, Mercari, and Facebook Marketplace"""
+    
+    if not request.query:
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+    
+    # Search all platforms
+    try:
+        platform_results = await search_all_platforms(request.query, request.max_results)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error searching platforms: {str(e)}")
+    
+    # Combine all results
+    all_results = []
+    for platform, results in platform_results.items():
+        for item in results:
+            if item.get('price', 0) > 0:
+                all_results.append(PriceResult(**item))
+    
+    if not all_results:
+        return ComparisonResponse(
+            query=request.query,
+            results=[],
+            lowest_price=None,
+            average_price=None,
+            highest_price=None,
+            total_results=0
+        )
+    
+    # Sort by price
+    all_results.sort(key=lambda x: x.price)
+    
+    # Calculate statistics
+    prices = [r.price for r in all_results]
+    
+    # Group by platform for summary
+    platform_summary = {}
+    for result in all_results:
+        if result.platform not in platform_summary:
+            platform_summary[result.platform] = {
+                'count': 0,
+                'avg_price': 0,
+                'prices': []
+            }
+        platform_summary[result.platform]['count'] += 1
+        platform_summary[result.platform]['prices'].append(result.price)
+    
+    # Calculate platform averages
+    for platform, data in platform_summary.items():
+        if data['prices']:
+            data['avg_price'] = sum(data['prices']) / len(data['prices'])
+    
+    return {
+        "query": request.query,
+        "results": all_results,
+        "lowest_price": min(prices),
+        "average_price": sum(prices) / len(prices),
+        "highest_price": max(prices),
+        "total_results": len(all_results),
+        "platform_summary": platform_summary
+    }
+
 @app.post("/compare_prices_mock")
 async def compare_prices_mock(request: ItemRequest):
     """Mock endpoint that always returns data for testing"""
@@ -127,4 +190,3 @@ async def compare_prices_mock(request: ItemRequest):
         highest_price=max(prices),
         total_results=len(mock_results)
     )
-

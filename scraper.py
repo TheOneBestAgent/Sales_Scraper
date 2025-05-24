@@ -140,6 +140,106 @@ async def search_ebay(query: str, max_results: int = 5) -> List[Dict]:
             ]
             
     return results
+async def search_mercari(query: str, max_results: int = 5) -> List[Dict]:
+    """
+    Search Mercari for products and prices
+    """
+    results = []
+    
+    # Format query for URL
+    search_query = query.replace(' ', '%20')
+    url = f"https://www.mercari.com/search/?keyword={search_query}"
+    
+    print(f"Searching Mercari for: {query}")
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+            }
+            
+            response = await client.get(url, headers=headers, timeout=30)
+            
+            if response.status_code != 200:
+                print(f"Mercari returned status: {response.status_code}")
+                return results
+                
+            # For now, return mock Mercari data
+            # Real scraping would require more complex parsing
+            mock_mercari = [
+                {
+                    'title': f'{query} - Like New Condition',
+                    'price': 85.00,
+                    'price_text': '$85.00',
+                    'condition': 'Like New',
+                    'shipping': 'Free shipping',
+                    'url': url,
+                    'platform': 'Mercari'
+                },
+                {
+                    'title': f'{query} - Good Condition',
+                    'price': 75.00,
+                    'price_text': '$75.00',
+                    'condition': 'Good',
+                    'shipping': '$5.99 shipping',
+                    'url': url,
+                    'platform': 'Mercari'
+                }
+            ]
+            
+            return mock_mercari[:max_results]
+            
+        except Exception as e:
+            print(f"Error searching Mercari: {e}")
+            return []
+
+async def search_facebook(query: str, max_results: int = 5) -> List[Dict]:
+    """
+    Search Facebook Marketplace (returns mock data for now)
+    Note: Facebook requires authentication for real scraping
+    """
+    # Facebook Marketplace requires login, so we'll use mock data
+    # In production, you'd use Facebook's API or a service like ScraperAPI
+    
+    print(f"Searching Facebook Marketplace for: {query}")
+    
+    mock_facebook = []
+    base_price = 90.0
+    
+    for i in range(min(3, max_results)):
+        price = base_price - (i * 15)
+        mock_facebook.append({
+            'title': f'{query} - Local Pickup',
+            'price': price,
+            'price_text': f'${price:.2f}',
+            'condition': 'Used' if i > 0 else 'Like New',
+            'shipping': 'Local pickup only',
+            'url': f'https://www.facebook.com/marketplace/item/{i}',
+            'platform': 'Facebook Marketplace'
+        })
+    
+    return mock_facebook
+
+async def search_all_platforms(query: str, max_results: int = 5) -> Dict[str, List[Dict]]:
+    """
+    Search all platforms simultaneously
+    """
+    # Run all searches concurrently for better performance
+    ebay_task = search_ebay(query, max_results)
+    mercari_task = search_mercari(query, max_results)
+    facebook_task = search_facebook(query, max_results)
+    
+    # Wait for all searches to complete
+    ebay_results, mercari_results, facebook_results = await asyncio.gather(
+        ebay_task, mercari_task, facebook_task
+    )
+    
+    return {
+        'ebay': ebay_results,
+        'mercari': mercari_results,
+        'facebook': facebook_results
+    }
+
 
 def extract_price(price_text: str) -> float:
     """Extract numeric price from text like '$99.99' or '$50.00 to $100.00'"""
