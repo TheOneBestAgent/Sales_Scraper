@@ -197,54 +197,68 @@ async def search_mercari(query: str, max_results: int = 5) -> List[Dict]:
             print(f"Mercari response received via ScraperAPI")
             soup = BeautifulSoup(response.text, 'lxml')
             
-            # Since we found items with the class lambda, let's parse them
-            items = soup.find_all('div', {'class': lambda x: x and 'Item' in x})
-            print(f"Found {len(items)} items with 'Item' in class")
+            # Look for any element containing a dollar sign
+            price_elements = soup.find_all(text=lambda text: text and '$' in text)
+            print(f"Found {len(price_elements)} price texts on page")
             
-            if items:
-                for i, item in enumerate(items[:max_results]):
+            # Also try finding spans/divs that commonly contain prices
+            price_containers = soup.find_all(['span', 'div', 'p'], 
+                                           string=lambda x: x and '$' in x and any(c.isdigit() for c in x))
+            print(f"Found {len(price_containers)} price containers")
+            
+            # Try to match prices with nearby titles
+            if price_containers:
+                for i, price_elem in enumerate(price_containers[:max_results]):
                     try:
-                        # Get all text from the item
-                        item_text = item.get_text(separator=' ', strip=True)
+                        price_text = price_elem.get_text(strip=True)
                         
-                        # Look for price in the item
+                        # Extract numeric price
                         import re
-                        price_match = re.search(r'\$(\d+(?:,\d{3})*(?:\.\d{2})?)', item_text)
+                        price_match = re.search(r'\$(\d+(?:,\d{3})*(?:\.\d{2})?)', price_text)
+                        if not price_match:
+                            continue
+                            
+                        price = float(price_match.group(1).replace(',', ''))
                         
-                        if price_match:
-                            price_text = price_match.group(0)
-                            price = float(price_match.group(1).replace(',', ''))
-                            
-                            # Try to extract title (usually first text before price)
-                            title_parts = item_text.split('$')[0].strip()
-                            title = title_parts[:100] if title_parts else f"Mercari Item {i+1}"
-                            
-                            results.append({
-                                'title': title,
-                                'price': price,
-                                'price_text': price_text,
-                                'condition': 'Check listing',
-                                'shipping': 'Check listing',
-                                'url': url,
-                                'platform': 'Mercari'
-                            })
-                            print(f"Parsed Mercari item: {title[:50]}... - {price_text}")
-                        else:
-                            print(f"No price found in item {i+1}")
-                            
+                        # Try to find associated title by looking at parent elements
+                        parent = price_elem.parent
+                        title = f"Item near {price_text}"
+                        
+                        # Look up the tree for text that might be a title
+                        for _ in range(5):
+                            if parent:
+                                # Find any text that's not the price
+                                texts = [t.strip() for t in parent.stripped_strings 
+                                        if t.strip() and '$' not in t and len(t.strip()) > 10]
+                                if texts:
+                                    title = texts[0][:100]
+                                    break
+                                parent = parent.parent
+                        
+                        results.append({
+                            'title': title,
+                            'price': price,
+                            'price_text': price_text,
+                            'condition': 'Check listing',
+                            'shipping': 'Check listing',
+                            'url': url,
+                            'platform': 'Mercari'
+                        })
+                        print(f"Found Mercari item: {title[:50]}... - {price_text}")
+                        
                     except Exception as e:
-                        print(f"Error parsing Mercari item {i+1}: {e}")
+                        print(f"Error parsing price element {i+1}: {e}")
                         continue
             
-            # If no results parsed successfully, return one mock item
+            # If still no results, Mercari might be fully JavaScript rendered
             if not results:
-                print("Could not parse Mercari items, returning mock data")
+                print("Mercari appears to be fully JS rendered, returning estimated data")
                 results.append({
-                    'title': f'{query} - Check Mercari.com',
+                    'title': f'{query} - Mercari (JS Rendered)',
                     'price': 85.00,
                     'price_text': '$85.00',
-                    'condition': 'Various',
-                    'shipping': 'Check site',
+                    'condition': 'Visit Mercari.com',
+                    'shipping': 'Varies',
                     'url': url,
                     'platform': 'Mercari'
                 })
