@@ -99,23 +99,22 @@ async def test_endpoint():
 
 @app.post("/compare_all_platforms")
 async def compare_all_platforms(request: ItemRequest):
-    """Compare prices across eBay, Mercari, and Facebook Marketplace"""
+    """Compare prices on eBay"""
     
     if not request.query:
         raise HTTPException(status_code=400, detail="Query cannot be empty")
     
-    # Search all platforms
+    # Search eBay
     try:
         platform_results = await search_all_platforms(request.query, request.max_results)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error searching platforms: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error searching eBay: {str(e)}")
     
-    # Combine all results
+    # Get eBay results
     all_results = []
-    for platform, results in platform_results.items():
-        for item in results:
-            if item.get('price', 0) > 0:
-                all_results.append(PriceResult(**item))
+    for item in platform_results.get('ebay', []):
+        if item.get('price', 0) > 0:
+            all_results.append(PriceResult(**item))
     
     if not all_results:
         return ComparisonResponse(
@@ -133,23 +132,6 @@ async def compare_all_platforms(request: ItemRequest):
     # Calculate statistics
     prices = [r.price for r in all_results]
     
-    # Group by platform for summary
-    platform_summary = {}
-    for result in all_results:
-        if result.platform not in platform_summary:
-            platform_summary[result.platform] = {
-                'count': 0,
-                'avg_price': 0,
-                'prices': []
-            }
-        platform_summary[result.platform]['count'] += 1
-        platform_summary[result.platform]['prices'].append(result.price)
-    
-    # Calculate platform averages
-    for platform, data in platform_summary.items():
-        if data['prices']:
-            data['avg_price'] = sum(data['prices']) / len(data['prices'])
-    
     return {
         "query": request.query,
         "results": all_results,
@@ -157,8 +139,9 @@ async def compare_all_platforms(request: ItemRequest):
         "average_price": sum(prices) / len(prices),
         "highest_price": max(prices),
         "total_results": len(all_results),
-        "platform_summary": platform_summary
+        "platform": "eBay"
     }
+
 
 @app.post("/compare_prices_mock")
 async def compare_prices_mock(request: ItemRequest):
