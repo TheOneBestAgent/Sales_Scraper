@@ -163,7 +163,7 @@ async def search_ebay(query: str, max_results: int = 5) -> List[Dict]:
             
     return results
 
-async def search_facebook(query: str, max_results: int = 5) -> List[Dict]:
+async def search_facebook(query: str, max_results: int = 5, city: str = "San Francisco", state: str = "CA") -> List[Dict]:
     """
     Search Facebook Marketplace using Apify actor
     """
@@ -171,15 +171,15 @@ async def search_facebook(query: str, max_results: int = 5) -> List[Dict]:
     
     actor_id = "apify/facebook-marketplace-scraper"
     
-    print(f"Searching Facebook Marketplace for: {query} (via Apify)")
+    print(f"Searching Facebook Marketplace for: {query} in {city}, {state} (via Apify)")
     
     # Prepare the input for the actor
     actor_input = {
         "searchQueries": [query],
         "maxItems": max_results,
         "location": {
-            "city": "San Francisco",
-            "state": "CA",
+            "city": city,
+            "state": state,
             "country": "US"
         },
         "sortBy": "best_match",
@@ -255,9 +255,9 @@ async def search_facebook(query: str, max_results: int = 5) -> List[Dict]:
                             'price': price,
                             'price_text': price_text,
                             'condition': item.get('condition', 'Used'),
-                            'shipping': f"Local pickup - {item.get('location', 'Check listing')}",
+                            'shipping': f"Local pickup - {item.get('location', f'{city}, {state}')}",
                             'url': item.get('url', f"https://www.facebook.com/marketplace/search/?query={query}"),
-                            'platform': 'Facebook Marketplace'
+                            'platform': f'Facebook Marketplace ({city}, {state})'
                         }
                         
                         results.append(result)
@@ -278,9 +278,9 @@ async def search_facebook(query: str, max_results: int = 5) -> List[Dict]:
             'price': 175.00,
             'price_text': '$175',
             'condition': 'Used',
-            'shipping': 'Local pickup only',
-            'url': f"https://www.facebook.com/marketplace/search/?query={query}",
-                        'platform': 'Facebook Marketplace'
+            'shipping': f'Local pickup - {city}, {state}',
+                        'url': f"https://www.facebook.com/marketplace/search/?query={query}",
+            'platform': f'Facebook Marketplace ({city}, {state})'
         })
     
     return results
@@ -308,13 +308,13 @@ def extract_price(price_text: str) -> float:
     
     return 0.0
 
-async def search_all_platforms(query: str, max_results: int = 5) -> Dict[str, List[Dict]]:
+async def search_all_platforms(query: str, max_results: int = 5, city: str = "San Francisco", state: str = "CA") -> Dict[str, List[Dict]]:
     """
     Search eBay and Facebook Marketplace
     """
     # Run both searches concurrently
     ebay_task = search_ebay(query, max_results)
-    facebook_task = search_facebook(query, max_results)
+    facebook_task = search_facebook(query, max_results, city, state)
     
     ebay_results, facebook_results = await asyncio.gather(
         ebay_task, facebook_task

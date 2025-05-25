@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 import os
-from scraper import search_all_platforms, search_ebay
+from scraper import search_all_platforms, search_ebay, search_facebook
 
 app = FastAPI(title="Price Comparison API")
 
@@ -20,10 +20,18 @@ app.add_middleware(
 class ItemRequest(BaseModel):
     query: str
     max_results: int = 5
+    city: str = "San Francisco"
+    state: str = "CA"
 
 class SearchRequest(BaseModel):
     query: str
     max_results: int = 5
+
+class FacebookSearchRequest(BaseModel):
+    query: str
+    max_results: int = 5
+    city: str = "San Francisco"
+    state: str = "CA"
 
 class PriceResult(BaseModel):
     title: str
@@ -49,6 +57,7 @@ async def root():
         "endpoints": {
             "/compare_all_platforms": "POST - Compare prices across eBay and Facebook Marketplace",
             "/search/ebay": "POST - Search eBay only",
+            "/search/facebook": "POST - Search Facebook Marketplace only",
             "/test_ebay_raw": "GET - Test eBay scraping"
         }
     }
@@ -62,7 +71,12 @@ async def compare_all_platforms(request: ItemRequest):
     
     # Search all platforms
     try:
-        platform_results = await search_all_platforms(request.query, request.max_results)
+        platform_results = await search_all_platforms(
+            request.query, 
+            request.max_results,
+            request.city,
+            request.state
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error searching platforms: {str(e)}")
     
@@ -108,6 +122,7 @@ async def compare_all_platforms(request: ItemRequest):
     
     return {
         "query": request.query,
+        "location": f"{request.city}, {request.state}",
         "results": all_results,
         "lowest_price": min(prices),
         "average_price": sum(prices) / len(prices),
@@ -121,6 +136,21 @@ async def search_ebay_endpoint(request: SearchRequest):
     """Search only eBay"""
     results = await search_ebay(request.query, request.max_results)
     return {"query": request.query, "results": results}
+
+@app.post("/search/facebook")
+async def search_facebook_endpoint(request: FacebookSearchRequest):
+    """Search only Facebook Marketplace"""
+    results = await search_facebook(
+        request.query, 
+        request.max_results,
+        request.city,
+        request.state
+    )
+    return {
+        "query": request.query,
+        "location": f"{request.city}, {request.state}",
+        "results": results
+    }
 
 @app.get("/test_ebay_raw")
 async def test_ebay_raw():
