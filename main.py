@@ -1,11 +1,11 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional
-import asyncio
-from scraper import search_ebay, search_all_platforms
+from typing import List, Optional, Dict
+import os
+from scraper import search_all_platforms, search_ebay
 
-app = FastAPI(title="Price Comparison Bot")
+app = FastAPI(title="Price Comparison API")
 
 # Enable CORS
 app.add_middleware(
@@ -16,9 +16,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Request/Response models
 class ItemRequest(BaseModel):
     query: str
-    max_results: Optional[int] = 10
+    max_results: int = 5
+
+class SearchRequest(BaseModel):
+    query: str
+    max_results: int = 5
 
 class PriceResult(BaseModel):
     title: str
@@ -38,83 +43,35 @@ class ComparisonResponse(BaseModel):
     total_results: int
 
 @app.get("/")
-def read_root():
-    return {"message": "Price Comparison Bot API is running!"}
-
-@app.get("/health")
-def health_check():
-    return {"status": "healthy"}
-
-@app.post("/compare_prices")
-async def compare_prices(request: ItemRequest):
-    """Compare prices for a product across platforms"""
-    
-    if not request.query:
-        raise HTTPException(status_code=400, detail="Query cannot be empty")
-    
-    # Search eBay
-    try:
-        results = await search_ebay(request.query, request.max_results)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error searching: {str(e)}")
-    
-    if not results:
-        return ComparisonResponse(
-            query=request.query,
-            results=[],
-            lowest_price=None,
-            average_price=None,
-            highest_price=None,
-            total_results=0
-        )
-    
-    # Convert to PriceResult objects
-    price_results = []
-    valid_prices = []
-    
-    for r in results:
-        if r['price'] > 0:  # Only include items with valid prices
-            price_results.append(PriceResult(**r))
-            valid_prices.append(r['price'])
-    
-    # Calculate statistics
-    lowest = min(valid_prices) if valid_prices else None
-    highest = max(valid_prices) if valid_prices else None
-    average = sum(valid_prices) / len(valid_prices) if valid_prices else None
-    
-    return ComparisonResponse(
-        query=request.query,
-        results=price_results,
-        lowest_price=lowest,
-        average_price=average,
-        highest_price=highest,
-        total_results=len(price_results)
-    )
-
-@app.get("/test")
-async def test_endpoint():
-    """Test endpoint to verify scraping works"""
-    results = await search_ebay("iPhone 12", 3)
-    return {"test_results": results}
+async def root():
+    return {
+        "message": "Price Comparison API",
+        "endpoints": {
+            "/compare_all_platforms": "POST - Compare prices across eBay and Facebook Marketplace",
+            "/search/ebay": "POST - Search eBay only",
+            "/test_ebay_raw": "GET - Test eBay scraping"
+        }
+    }
 
 @app.post("/compare_all_platforms")
 async def compare_all_platforms(request: ItemRequest):
-    """Compare prices on eBay"""
+    """Compare prices across eBay and Facebook Marketplace"""
     
     if not request.query:
         raise HTTPException(status_code=400, detail="Query cannot be empty")
     
-    # Search eBay
+    # Search all platforms
     try:
         platform_results = await search_all_platforms(request.query, request.max_results)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error searching eBay: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error searching platforms: {str(e)}")
     
-    # Get eBay results
+    # Combine all results
     all_results = []
-    for item in platform_results.get('ebay', []):
-        if item.get('price', 0) > 0:
-            all_results.append(PriceResult(**item))
+    for platform, results in platform_results.items():
+        for item in results:
+            if item.get('price', 0) > 0:
+                all_results.append(PriceResult(**item))
     
     if not all_results:
         return ComparisonResponse(
@@ -132,6 +89,23 @@ async def compare_all_platforms(request: ItemRequest):
     # Calculate statistics
     prices = [r.price for r in all_results]
     
+    # Group by platform for summary
+    platform_summary = {}
+    for result in all_results:
+        if result.platform not in platform_summary:
+            platform_summary[result.platform] = {
+                'count': 0,
+                'avg_price': 0,
+                'prices': []
+            }
+        platform_summary[result.platform]['count'] += 1
+        platform_summary[result.platform]['prices'].append(result.price)
+    
+    # Calculate platform averages
+    for platform, data in platform_summary.items():
+        if data['prices']:
+            data['avg_price'] = sum(data['prices']) / len(data['prices'])
+    
     return {
         "query": request.query,
         "results": all_results,
@@ -139,40 +113,14 @@ async def compare_all_platforms(request: ItemRequest):
         "average_price": sum(prices) / len(prices),
         "highest_price": max(prices),
         "total_results": len(all_results),
-        "platform": "eBay"
+        "platform_summary": platform_summary
     }
 
-
-@app.post("/compare_prices_mock")
-async def compare_prices_mock(request: ItemRequest):
-    """Mock endpoint that always returns data for testing"""
-    
-    # Generate mock results based on the query
-    mock_results = []
-    base_price = 100.0
-    
-    for i in range(request.max_results):
-        price = base_price + (i * 10) - (i * 3.5)
-        mock_results.append(PriceResult(
-            title=f"{request.query} - Option {i+1}",
-            price=price,
-            price_text=f"${price:.2f}",
-            condition="New" if i % 2 == 0 else "Used",
-            shipping="Free shipping" if i % 3 == 0 else f"${5 + i:.2f} shipping",
-            url=f"https://example.com/item{i+1}",
-            platform="eBay"
-        ))
-    
-    prices = [r.price for r in mock_results]
-    
-    return ComparisonResponse(
-        query=request.query,
-        results=mock_results,
-        lowest_price=min(prices),
-        average_price=sum(prices) / len(prices),
-        highest_price=max(prices),
-        total_results=len(mock_results)
-    )
+@app.post("/search/ebay")
+async def search_ebay_endpoint(request: SearchRequest):
+    """Search only eBay"""
+    results = await search_ebay(request.query, request.max_results)
+    return {"query": request.query, "results": results}
 
 @app.get("/test_ebay_raw")
 async def test_ebay_raw():
@@ -187,35 +135,7 @@ async def test_ebay_raw():
         "prices": [r.get('price', 'NO PRICE') for r in results]
     }
 
-@app.get("/debug_mercari")
-async def debug_mercari():
-    """Show what Mercari HTML looks like"""
-    try:
-        with open('/tmp/mercari_debug.html', 'r') as f:
-            content = f.read()
-        
-        # Find any dollar amounts in the HTML
-        import re
-        prices = re.findall(r'\$[\d,]+\.?\d*', content)
-        
-        # Find any potential item containers
-        item_indicators = [
-            content.count('data-testid'),
-            content.count('item'),
-            content.count('product'),
-            content.count('listing')
-        ]
-        
-        return {
-            "html_length": len(content),
-            "prices_found": prices[:10],  # First 10 prices
-            "indicators": {
-                "data-testid": item_indicators[0],
-                "item": item_indicators[1],
-                "product": item_indicators[2],
-                "listing": item_indicators[3]
-            },
-            "preview": content[:1000]  # First 1000 chars
-        }
-    except Exception as e:
-        return {"error": str(e)}
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
